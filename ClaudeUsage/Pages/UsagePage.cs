@@ -1,12 +1,19 @@
-using System.Text;
+using System.Text.Json;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 
 namespace ClaudeUsage.Pages;
 
+/// <summary>
+/// Stats page rendered as a single styled AdaptiveCard (FormContent).
+/// Visual hierarchy comes from size/weight/ColumnSet alignment plus colored
+/// emoji (TextBlock.color does not render in CmdPal's host, so we avoid it).
+/// The card's "Refresh now" action is wired via <see cref="UsageFormContent"/>.
+/// </summary>
 internal sealed class UsagePage : ContentPage
 {
     private readonly UsageClient _client = new();
+    private UsageFormContent? _form;
 
     public UsagePage()
     {
@@ -30,30 +37,48 @@ internal sealed class UsagePage : ContentPage
         }
         catch { }
 
-        var md = new MarkdownContent(BuildMarkdown(snapshot, failureReason, httpStatus));
-        var form = new FormContent
-        {
-            TemplateJson = """
-            {
-              "type": "AdaptiveCard",
-              "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-              "version": "1.5",
-              "body": [
-                { "type": "TextBlock", "text": "Refresh usage data", "wrap": true }
-              ],
-              "actions": [
-                { "type": "Action.Submit", "title": "Refresh now", "data": { "action": "refresh" } }
-              ]
-            }
-            """,
-            DataJson = "{}",
-        };
-
-        return [md, form];
+        var form = _form ??= new UsageFormContent(BuildCardJson(snapshot, failureReason, httpStatus), Refresh);
+        form.DataJson = "{}";
+        return [form];
     }
 
-    private string BuildMarkdown(UsageSnapshot? snapshot, UsageFailureReason failureReason, int? httpStatus)
+    /// <summary>
+    /// Invoked by the card's "Refresh now" submit action. Forces a fresh
+    /// fetch off the calling thread, then pushes an updated card template
+    /// and raises ItemsChanged so the host re-renders (belt and suspenders:
+    /// covers both the PropChange path and the GetContent re-call path).
+    /// </summary>
+    internal void Refresh()
     {
+        _ = Task.Run(async () =>
+        {
+            UsageResult result;
+            try
+            {
+                result = await _client.GetAsync(force: true);
+            }
+            catch
+            {
+                result = new UsageResult(UsageFailureReason.NetworkError);
+            }
+
+            var form = _form;
+            if (form != null)
+            {
+                form.TemplateJson = BuildCardJson(result.Snapshot, result.Reason, result.HttpStatusCode);
+            }
+            RaiseItemsChanged(0);
+        });
+    }
+
+    // ── AdaptiveCard builder ──────────────────────────────────────────────
+
+    private string BuildCardJson(UsageSnapshot? snapshot, UsageFailureReason failureReason, int? httpStatus)
+    {
+        var body = new List<object>();
+
+        body.Add(TextBlock("Claude usage", size: "Large", weight: "Bolder"));
+
         if (snapshot == null)
         {
             var errorMsg = failureReason switch
@@ -64,56 +89,83 @@ internal sealed class UsagePage : ContentPage
                 UsageFailureReason.ParseError => "Failed to parse usage data. Please try again later.",
                 _ => "Failed to fetch usage data."
             };
-            return $"# Claude usage\n\n{errorMsg}";
+            body.Add(TextBlock(errorMsg, spacing: "small", subtle: true));
+        }
+        else
+        {
+            var sessionLeft = (int)Math.Round(snapshot.SessionLeftPercent);
+            var weeklyLeft = (int)Math.Round(snapshot.WeeklyLeftPercent);
+            var sessionReset = snapshot.SessionResetsAt.ToLocalTime();
+            var weeklyReset = snapshot.WeeklyResetsAt.ToLocalTime();
+
+            body.AddRange(Metric("Session (5h)", left: sessionLeft, bar: BuildUnicodeBar(100 - sessionLeft), spacing: "medium"));
+            body.AddRange(Metric("Week (all models)", left: weeklyLeft, bar: BuildUnicodeBar(100 - weeklyLeft), spacing: "medium"));
+
+            foreach (var limit in snapshot.Limits.Where(l => l.Kind == "weekly_scoped"))
+            {
+                if (string.IsNullOrEmpty(limit.ModelDisplayName)) continue;
+                var used = (int)Math.Round(limit.PercentUsed);
+                var left = 100 - used;
+                body.AddRange(Metric($"Week — {limit.ModelDisplayName}", left: left, bar: BuildUnicodeBar(used), spacing: "medium"));
+            }
+
+            body.Add(TextBlock($"Session resets {sessionReset:HH:mm} · Week resets {weeklyReset:ddd HH:mm} · Updated {DateTime.Now:HH:mm}", spacing: "large", subtle: true));
         }
 
-        var sb = new StringBuilder();
-        sb.AppendLine("# Claude usage");
-        sb.AppendLine();
-
-        var sessionResets = snapshot.SessionResetsAt.ToLocalTime();
-        sb.AppendLine($"Max 5× · session resets {sessionResets:HH:mm}");
-        sb.AppendLine();
-
-        // Session limit
-        sb.AppendLine("## Session (5h)");
-        var sessionPercent = (int)Math.Round(snapshot.SessionLeftPercent);
-        var sessionBar = BuildUnicodeBar(100 - sessionPercent, 24);
-        sb.AppendLine($"{sessionBar} {sessionPercent}% left");
-        sb.AppendLine();
-
-        // Weekly limits
-        var weeklyResets = snapshot.WeeklyResetsAt.ToLocalTime();
-        var weeklyPercent = (int)Math.Round(snapshot.WeeklyLeftPercent);
-        sb.AppendLine("## Week (all models)");
-        var weeklyBar = BuildUnicodeBar(100 - weeklyPercent, 24);
-        sb.AppendLine($"{weeklyBar} {weeklyPercent}% left");
-        sb.AppendLine();
-
-        // Per-model limits
-        var scopedLimits = snapshot.Limits.Where(l => l.Kind == "weekly_scoped").ToList();
-        if (scopedLimits.Count > 0)
+        var root = new Dictionary<string, object?>
         {
-            foreach (var limit in scopedLimits)
+            ["type"] = "AdaptiveCard",
+            ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
+            ["version"] = "1.5",
+            ["body"] = body,
+            ["actions"] = new List<object>
             {
-                if (!string.IsNullOrEmpty(limit.ModelDisplayName))
+                new Dictionary<string, object?>
                 {
-                    sb.AppendLine($"## Week — {limit.ModelDisplayName}");
-                    var used = (int)Math.Round(limit.PercentUsed);
-                    var left = 100 - used;
-                    var bar = BuildUnicodeBar(used, 24);
-                    sb.AppendLine($"{bar} {left}% left");
-                    sb.AppendLine();
+                    ["type"] = "Action.Submit",
+                    ["title"] = "Refresh now",
+                    ["data"] = new Dictionary<string, object?> { ["action"] = "refresh" }
                 }
             }
-        }
+        };
 
-        sb.AppendLine($"Last updated {DateTime.Now:HH:mm}");
-
-        return sb.ToString();
+        return JsonSerializer.Serialize(root);
     }
 
-    private string BuildUnicodeBar(int used, int width)
+    /// <summary>A metric = label on one line, then the bar + percentage on one adjacent line.</summary>
+    private IEnumerable<object> Metric(string label, int left, string bar, string spacing)
+    {
+        yield return TextBlock(label, weight: "Bolder", spacing: spacing);
+        yield return TextBlock($"{StatusEmoji(left)}  {bar}  {left}% left", size: "Medium", fontType: "Monospace", spacing: "small");
+    }
+
+    private static string StatusEmoji(int leftPercent) => leftPercent switch
+    {
+        >= 50 => "🟢",
+        >= 20 => "🟡",
+        _ => "🔴"
+    };
+
+    private static Dictionary<string, object?> TextBlock(string text,
+        string? size = null, string? weight = null, string? align = null,
+        string? spacing = null, string? fontType = null, bool subtle = false)
+    {
+        var d = new Dictionary<string, object?>
+        {
+            ["type"] = "TextBlock",
+            ["text"] = text,
+            ["wrap"] = true
+        };
+        if (size != null) d["size"] = size;
+        if (weight != null) d["weight"] = weight;
+        if (align != null) d["horizontalAlignment"] = align;
+        if (spacing != null) d["spacing"] = spacing;
+        if (fontType != null) d["fontType"] = fontType;
+        if (subtle) d["isSubtle"] = true;
+        return d;
+    }
+
+    private static string BuildUnicodeBar(int used, int width = 24)
     {
         const char UsedChar = '█';
         const char FreeChar = '░';
