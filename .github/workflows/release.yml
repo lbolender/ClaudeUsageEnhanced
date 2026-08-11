@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build and Package
+        run: .github/scripts/build-ci.ps1
+        shell: powershell
+
+      - name: Copy Install Script
+        run: Copy-Item install.ps1 dist/
+        shell: powershell
+
+      - name: Create Release Zip
+        run: |
+          Compress-Archive -Path dist/* -DestinationPath ClaudeUsage-Release.zip
+        shell: powershell
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ClaudeUsage-Release.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
