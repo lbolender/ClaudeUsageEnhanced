@@ -49,7 +49,7 @@ internal sealed class UsageBand
             var weeklyLeft = (int)Math.Round(snapshot.WeeklyLeftPercent);
             var resetLocal = snapshot.SessionResetsAt.ToLocalTime();
 
-            var title = $"Claude {sessionLeft}%";
+            var title = $"{sessionLeft}%";
             var subtitle = $"wk {weeklyLeft}% · resets {resetLocal:HH:mm}";
 
             SetTitle(title, subtitle);
