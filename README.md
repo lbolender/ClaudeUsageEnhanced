@@ -1,17 +1,21 @@
 # ClaudeUsage
 
+![Windows 11](https://img.shields.io/badge/Windows-11%2B-0078D4)
+![PowerToys](https://img.shields.io/badge/PowerToys-0.9%2B-blue)
+![MIT](https://img.shields.io/badge/License-MIT-green)
+
 **See how much Claude Code and Codex CLI you have left — right in your Windows dock.**
 
 A PowerToys Command Palette extension that pins your Claude Code and Codex (ChatGPT) subscription limits to the CmdPal dock as live percentage bands, each with its logo so you can tell them apart at a glance. Click either one for the full picture:
 
-![Claude usage stats page showing session, weekly and per-model progress bars](docs/stats-page.png)
+![Claude usage stats page showing session, weekly and per-model progress bars](docs/ClaudeUsage.png)
 
 ## Features
 
-- **Dock bands**: live indicator of your 5-hour session (% left) for both Claude Code and Codex CLI, with weekly % and reset time in the subtitle
-- **Stats page**: session, weekly, and per-model limits as progress bars, with reset countdowns and a one-click refresh
-- **Low battery alert**: the icon fills solid when less than 20% of your session remains
-- **Zero phone-home**: talks only to Anthropic's / OpenAI's official usage endpoints with the tokens Claude Code and Codex CLI already store locally; no telemetry, nothing else leaves your machine
+- **⚡ Dock bands**: live indicator of your 5-hour session (% left) for both Claude Code and Codex CLI, with weekly % and reset time in the subtitle
+- **📊 Stats page**: session, weekly, and per-model limits as progress bars, with reset countdowns and a one-click refresh
+- **🎨 Smart color alerts**: the icon fills solid when less than 20% of your session remains
+- **🔒 Zero telemetry**: talks only to Anthropic's / OpenAI's official usage endpoints with the tokens Claude Code and Codex CLI already store locally; nothing else leaves your machine
 
 ## Requirements
 
@@ -39,6 +43,8 @@ If you want to build it yourself:
 3. On first install, UAC prompts once to trust the dev certificate; updates install without elevation
 4. Open Command Palette (Win+Alt+Space)
 5. Enable "Claude usage" and/or "Codex Usage" in Dock settings to see the live band(s)
+
+If you get a "script disabled" error running either script: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
 
 ## How it Works
 
