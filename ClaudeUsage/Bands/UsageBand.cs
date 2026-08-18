@@ -16,7 +16,7 @@ internal sealed class UsageBand
 
     public UsageBand(UsagePage page)
     {
-        _client = new UsageClient();
+        _client = page._client;
         _page = page;
         _bandItem = new ListItem(page);
         _dockItem = new WrappedDockItem([_bandItem], "claudeusage.dock.usage", "Claude Usage");

@@ -16,7 +16,7 @@ internal sealed class CodexUsageBand
 
     public CodexUsageBand(CodexUsagePage page)
     {
-        _client = new CodexUsageClient();
+        _client = page._client;
         _page = page;
         _bandItem = new ListItem(page);
         _dockItem = new WrappedDockItem([_bandItem], "claudeusage.dock.codex", "Codex Usage");

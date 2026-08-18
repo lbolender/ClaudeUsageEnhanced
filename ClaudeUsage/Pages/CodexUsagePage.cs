@@ -6,7 +6,7 @@ namespace ClaudeUsage.Pages;
 
 internal sealed class CodexUsagePage : ContentPage
 {
-    private readonly CodexUsageClient _client = new();
+    internal readonly CodexUsageClient _client = new();
 
     public CodexUsagePage()
     {

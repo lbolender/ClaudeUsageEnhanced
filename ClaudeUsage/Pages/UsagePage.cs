@@ -6,7 +6,7 @@ namespace ClaudeUsage.Pages;
 
 internal sealed class UsagePage : ContentPage
 {
-    private readonly UsageClient _client = new();
+    internal readonly UsageClient _client = new();
 
     public UsagePage()
     {
