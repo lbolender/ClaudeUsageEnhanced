@@ -96,7 +96,7 @@ internal sealed class UsageBand
 
     private void ApplyIcons(bool sessionLow, bool weeklyLow)
     {
-        BandIcons.Apply(_sessionItem, ref _sessionIconKind, sessionLow ? BandIcons.Filled : BandIcons.Outline, "claude");
-        BandIcons.Apply(_weeklyItem, ref _weeklyIconKind, weeklyLow ? BandIcons.Filled : BandIcons.Calendar, "claude");
+        BandIcons.Apply(_sessionItem, ref _sessionIconKind, sessionLow ? BandIcons.Filled : BandIcons.Outline);
+        BandIcons.Apply(_weeklyItem, ref _weeklyIconKind, weeklyLow ? BandIcons.Filled : BandIcons.Calendar);
     }
 }

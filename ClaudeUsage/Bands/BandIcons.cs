@@ -4,7 +4,7 @@ namespace ClaudeUsage.Bands;
 
 internal static class BandIcons
 {
-    // Brand logo, white on dark theme and dark on light theme. CmdPal does not resolve
+    // Claude logo, white on dark theme and dark on light theme. CmdPal does not resolve
     // fill="currentColor" in SVGs to the theme foreground, so both variants are explicit.
     public const string Outline = "outline";
     // Brand-colored logo, used as the "running low" warning
@@ -12,18 +12,18 @@ internal static class BandIcons
     // Segoe Fluent calendar glyph for the weekly item; glyphs follow the theme automatically
     public const string Calendar = "calendar";
 
-    private static IconInfo Create(string kind, string brand) => kind switch
+    private static IconInfo Create(string kind) => kind switch
     {
         Outline => IconHelpers.FromRelativePaths(
-            $"Assets\\icons\\{brand}-outline-light.svg",
-            $"Assets\\icons\\{brand}-outline-dark.svg"),
-        Filled => IconHelpers.FromRelativePath($"Assets\\icons\\{brand}-filled.svg"),
-        Calendar => new IconInfo(""),
+            "Assets\\icons\\claude-outline-light.svg",
+            "Assets\\icons\\claude-outline-dark.svg"),
+        Filled => IconHelpers.FromRelativePath("Assets\\icons\\claude-filled.svg"),
+        Calendar => new IconInfo("\uE787"),
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
 
     // Only reassign the icon when it actually changes, so the dock does not redraw it every refresh
-    public static void Apply(ListItem item, ref string? appliedKind, string kind, string brand)
+    public static void Apply(ListItem item, ref string? appliedKind, string kind)
     {
         if (kind == appliedKind)
         {
@@ -31,7 +31,7 @@ internal static class BandIcons
         }
         try
         {
-            item.Icon = Create(kind, brand);
+            item.Icon = Create(kind);
             appliedKind = kind;
         }
         catch { /* fallback: leave existing icon */ }
