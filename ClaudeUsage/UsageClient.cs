@@ -29,35 +29,47 @@ public enum UsageFailureReason
 {
     Ok,
     NoCredentials,
+    TokenExpired,
     HttpError,
     NetworkError,
     ParseError
 }
 
 /// <summary>
-/// Result of a usage fetch operation
+/// Result of a usage fetch operation. On failure, Snapshot holds the last good
+/// (stale) snapshot if one exists, and RetryAt the time of the next allowed request.
 /// </summary>
 public record UsageResult(
     UsageFailureReason Reason,
     UsageSnapshot? Snapshot = null,
-    int? HttpStatusCode = null);
+    int? HttpStatusCode = null,
+    DateTime? RetryAt = null)
+{
+    public bool IsStale => Reason != UsageFailureReason.Ok && Snapshot != null;
+}
 
 /// <summary>
-/// Fetches usage data from Claude API with caching and background refresh
+/// Fetches usage data from Claude API with caching and backoff.
+/// The access token is only read, never refreshed — Claude Code owns the refresh.
 /// </summary>
 public class UsageClient
 {
     private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
     private readonly string _credentialsPath;
-    private UsageSnapshot? _cachedSnapshot;
-    private DateTime _lastFetch = DateTime.MinValue;
-    private Timer? _refreshTimer;
+    private readonly SemaphoreSlim _fetchLock = new(1, 1);
+    private UsageSnapshot? _lastGood;
+    private UsageResult? _lastResult;
+    private DateTime _nextAllowedFetch = DateTime.MinValue;
+    private int _consecutiveFailures;
+    private string? _rejectedToken;
 
     private const string ApiUrl = "https://api.anthropic.com/api/oauth/usage";
     private const string ApiVersion = "oauth-2025-04-20";
     private const string UserAgent = "claude-code/2.1.206";
-    private const int CacheMaxAgeSeconds = 60;
-    private const int BackgroundRefreshSeconds = 300; // 5 minutes
+    private const int CacheMaxAgeSeconds = 180; // at most one request every 3 minutes
+    private const int BackoffBaseSeconds = 60;
+    private const int BackoffMaxSeconds = 1800; // 30 minutes
+    private const int ExpirySkewSeconds = 60;
 
     public UsageClient()
     {
@@ -68,38 +80,76 @@ public class UsageClient
         DebugLog.WriteLine($"UsageClient construct: UserProfile={userProfile}, USERPROFILE env={userProfileEnv}, BaseDirectory={baseDir}");
 
         _credentialsPath = Path.Combine(userProfile, ".claude", ".credentials.json");
-        StartBackgroundRefresh();
     }
 
     /// <summary>
     /// Get usage snapshot, using cache if fresher than CacheMaxAgeSeconds.
-    /// Returns result with failure reason if unsuccessful.
+    /// force skips the cache but never an active backoff.
+    /// Returns result with failure reason (and last good snapshot) if unsuccessful.
     /// </summary>
     public async Task<UsageResult> GetAsync(bool force = false)
     {
-        if (!force && _cachedSnapshot != null && (DateTime.UtcNow - _cachedSnapshot.FetchedAt).TotalSeconds < CacheMaxAgeSeconds)
+        if (!force && IsCacheFresh())
         {
-            return new UsageResult(UsageFailureReason.Ok, _cachedSnapshot);
+            return new UsageResult(UsageFailureReason.Ok, _lastGood);
         }
 
-        return await FetchAsync();
+        await _fetchLock.WaitAsync();
+        try
+        {
+            // Another caller may have fetched while we were waiting
+            if (!force && IsCacheFresh())
+            {
+                return new UsageResult(UsageFailureReason.Ok, _lastGood);
+            }
+
+            if (DateTime.UtcNow < _nextAllowedFetch && _lastResult != null)
+            {
+                DebugLog.WriteLine($"GetAsync: in backoff until {_nextAllowedFetch:O}, skipping request");
+                return _lastResult;
+            }
+
+            _lastResult = await FetchAsync();
+            return _lastResult;
+        }
+        finally
+        {
+            _fetchLock.Release();
+        }
     }
+
+    private bool IsCacheFresh() =>
+        _lastGood != null && (DateTime.UtcNow - _lastGood.FetchedAt).TotalSeconds < CacheMaxAgeSeconds;
 
     private async Task<UsageResult> FetchAsync()
     {
+        string? token = null;
         try
         {
             var credentialsExist = File.Exists(_credentialsPath);
             DebugLog.WriteLine($"FetchAsync: credentialsPath={_credentialsPath}, exists={credentialsExist}");
 
-            var token = ReadToken();
+            (token, var expiresAt) = ReadCredentials();
             if (string.IsNullOrEmpty(token))
             {
                 DebugLog.WriteLine($"FetchAsync: token is null/empty, returning NoCredentials");
-                return new UsageResult(UsageFailureReason.NoCredentials);
+                return new UsageResult(UsageFailureReason.NoCredentials, _lastGood);
             }
 
-            DebugLog.WriteLine($"FetchAsync: token length={token.Length}, expiresAt=(N/A)");
+            DebugLog.WriteLine($"FetchAsync: token length={token.Length}, expiresAt={expiresAt?.ToString("O") ?? "(N/A)"}");
+
+            // No request with a token that cannot work — wait for Claude Code to write a fresh one
+            if (expiresAt != null && expiresAt.Value <= DateTime.UtcNow.AddSeconds(ExpirySkewSeconds))
+            {
+                DebugLog.WriteLine($"FetchAsync: skipped, token expired at {expiresAt:O}");
+                return new UsageResult(UsageFailureReason.TokenExpired, _lastGood);
+            }
+            if (token == _rejectedToken)
+            {
+                DebugLog.WriteLine($"FetchAsync: skipped, token was already rejected with 401/403");
+                return new UsageResult(UsageFailureReason.TokenExpired, _lastGood);
+            }
+
             DebugLog.WriteLine($"FetchAsync: sending GET {ApiUrl} with Authorization Bearer, anthropic-beta={ApiVersion}, User-Agent={UserAgent}");
 
             using var request = new HttpRequestMessage(HttpMethod.Get, ApiUrl);
@@ -116,7 +166,17 @@ public class UsageClient
                 var errorBody = await response.Content.ReadAsStringAsync();
                 var errorPreview = errorBody.Length > 200 ? errorBody.Substring(0, 200) : errorBody;
                 DebugLog.WriteLine($"FetchAsync: error response body (first 200 chars): {errorPreview}");
-                return new UsageResult(UsageFailureReason.HttpError, HttpStatusCode: statusCode);
+
+                if (statusCode is 401 or 403)
+                {
+                    _rejectedToken = token;
+                    return new UsageResult(UsageFailureReason.TokenExpired, _lastGood, statusCode);
+                }
+
+                TimeSpan? retryAfter = response.Headers.RetryAfter?.Delta
+                    ?? response.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow;
+                DebugLog.WriteLine($"FetchAsync: Retry-After={retryAfter?.ToString() ?? "(none)"}");
+                return Failure(UsageFailureReason.HttpError, statusCode, retryAfter);
             }
 
             var content = await response.Content.ReadAsStringAsync();
@@ -146,7 +206,7 @@ public class UsageClient
 
             var subType = GetString(root, "subscription_type") ?? "unknown";
 
-            _cachedSnapshot = new UsageSnapshot(
+            _lastGood = new UsageSnapshot(
                 SessionLeftPercent: 100 - sessionUtil,
                 WeeklyLeftPercent: 100 - weeklyUtil,
                 SessionResetsAt: sessionResets,
@@ -155,65 +215,94 @@ public class UsageClient
                 SubscriptionType: subType,
                 FetchedAt: DateTime.UtcNow);
 
-            _lastFetch = DateTime.UtcNow;
-            DebugLog.WriteLine($"FetchAsync: OK session={_cachedSnapshot.SessionLeftPercent:F1}% weekly={_cachedSnapshot.WeeklyLeftPercent:F1}%");
-            return new UsageResult(UsageFailureReason.Ok, _cachedSnapshot);
+            _consecutiveFailures = 0;
+            _rejectedToken = null;
+            DebugLog.WriteLine($"FetchAsync: OK session={_lastGood.SessionLeftPercent:F1}% weekly={_lastGood.WeeklyLeftPercent:F1}%");
+            return new UsageResult(UsageFailureReason.Ok, _lastGood);
         }
         catch (HttpRequestException ex)
         {
             DebugLog.WriteLine($"FetchAsync: HttpRequestException: {ex}");
-            return new UsageResult(UsageFailureReason.NetworkError);
+            return Failure(UsageFailureReason.NetworkError);
         }
         catch (OperationCanceledException ex)
         {
             DebugLog.WriteLine($"FetchAsync: OperationCanceledException: {ex}");
-            return new UsageResult(UsageFailureReason.NetworkError);
+            return Failure(UsageFailureReason.NetworkError);
         }
         catch (JsonException ex)
         {
             DebugLog.WriteLine($"FetchAsync: JsonException: {ex}");
-            return new UsageResult(UsageFailureReason.ParseError);
+            return Failure(UsageFailureReason.ParseError);
         }
         catch (Exception ex)
         {
             DebugLog.WriteLine($"FetchAsync: Unexpected exception: {ex}");
-            return new UsageResult(UsageFailureReason.ParseError);
+            return Failure(UsageFailureReason.ParseError);
         }
     }
 
-    private string? ReadToken()
+    /// <summary>
+    /// Records a failed request and schedules the next one with exponential backoff
+    /// (60s, 120s, 240s … capped at 30 min), or later if the server asked for it.
+    /// </summary>
+    private UsageResult Failure(UsageFailureReason reason, int? statusCode = null, TimeSpan? retryAfter = null)
+    {
+        _consecutiveFailures++;
+        var exponent = Math.Min(_consecutiveFailures - 1, 10);
+        var backoff = TimeSpan.FromSeconds(Math.Min(BackoffBaseSeconds * Math.Pow(2, exponent), BackoffMaxSeconds));
+        if (retryAfter != null && retryAfter.Value > backoff)
+        {
+            backoff = retryAfter.Value;
+        }
+
+        _nextAllowedFetch = DateTime.UtcNow + backoff;
+        DebugLog.WriteLine($"FetchAsync: failure #{_consecutiveFailures} ({reason} {statusCode}), backoff until {_nextAllowedFetch:O}");
+        return new UsageResult(reason, _lastGood, statusCode, _nextAllowedFetch);
+    }
+
+    private (string? Token, DateTime? ExpiresAt) ReadCredentials()
     {
         try
         {
             if (!File.Exists(_credentialsPath))
             {
-                DebugLog.WriteLine($"ReadToken: credentials file does not exist at {_credentialsPath}");
-                return null;
+                DebugLog.WriteLine($"ReadCredentials: credentials file does not exist at {_credentialsPath}");
+                return (null, null);
             }
 
             var json = File.ReadAllText(_credentialsPath);
             using var doc = JsonDocument.Parse(json);
-            var result = doc.RootElement
-                .TryGetProperty("claudeAiOauth", out var oauth) &&
-                oauth.TryGetProperty("accessToken", out var token)
-                ? token.GetString()
+            if (!doc.RootElement.TryGetProperty("claudeAiOauth", out var oauth))
+            {
+                DebugLog.WriteLine($"ReadCredentials: credentials file exists but claudeAiOauth not found");
+                return (null, null);
+            }
+
+            var token = oauth.TryGetProperty("accessToken", out var tok) && tok.ValueKind == JsonValueKind.String
+                ? tok.GetString()
                 : null;
 
-            if (result != null)
+            // expiresAt is a Unix timestamp in milliseconds
+            DateTime? expiresAt = oauth.TryGetProperty("expiresAt", out var exp) && exp.ValueKind == JsonValueKind.Number && exp.TryGetInt64(out var ms)
+                ? DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime
+                : null;
+
+            if (token != null)
             {
-                DebugLog.WriteLine($"ReadToken: successfully read token, length={result.Length}");
+                DebugLog.WriteLine($"ReadCredentials: successfully read token, length={token.Length}");
             }
             else
             {
-                DebugLog.WriteLine($"ReadToken: credentials file exists but claudeAiOauth.accessToken not found");
+                DebugLog.WriteLine($"ReadCredentials: credentials file exists but claudeAiOauth.accessToken not found");
             }
 
-            return result;
+            return (token, expiresAt);
         }
         catch (Exception ex)
         {
-            DebugLog.WriteLine($"ReadToken: exception reading credentials: {ex}");
-            return null;
+            DebugLog.WriteLine($"ReadCredentials: exception reading credentials: {ex}");
+            return (null, null);
         }
     }
 
@@ -294,16 +383,8 @@ public class UsageClient
         return DateTime.UtcNow.AddHours(1);
     }
 
-    private void StartBackgroundRefresh()
-    {
-        _refreshTimer = new Timer(async _ =>
-        {
-            await FetchAsync();
-        }, null, TimeSpan.FromSeconds(BackgroundRefreshSeconds), TimeSpan.FromSeconds(BackgroundRefreshSeconds));
-    }
-
     public void Dispose()
     {
-        _refreshTimer?.Dispose();
+        _fetchLock.Dispose();
     }
 }

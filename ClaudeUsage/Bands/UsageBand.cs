@@ -29,17 +29,9 @@ internal sealed class UsageBand
         {
             var result = await _client.GetAsync();
 
-            if (result.Reason != UsageFailureReason.Ok || result.Snapshot == null)
+            if (result.Snapshot == null)
             {
-                var errorMessage = result.Reason switch
-                {
-                    UsageFailureReason.NoCredentials => "sign in to Claude Code",
-                    UsageFailureReason.HttpError => $"API error {result.HttpStatusCode}",
-                    UsageFailureReason.NetworkError => "offline",
-                    UsageFailureReason.ParseError => "parse error",
-                    _ => "error fetching usage"
-                };
-                SetTitle("Claude —", errorMessage);
+                SetTitle("Claude —", DescribeFailure(result, verbose: true));
                 ApplyIcon(quiet: true);
                 return;
             }
@@ -50,6 +42,16 @@ internal sealed class UsageBand
             var resetLocal = snapshot.SessionResetsAt.ToLocalTime();
 
             var title = $"{sessionLeft}%";
+
+            if (result.IsStale)
+            {
+                // Keep the last known value visible, but make clear it is outdated
+                var fetchedLocal = snapshot.FetchedAt.ToLocalTime();
+                SetTitle(title, $"stale {fetchedLocal:HH:mm} · {DescribeFailure(result, verbose: false)}");
+                ApplyIcon(quiet: true);
+                return;
+            }
+
             var subtitle = $"wk {weeklyLeft}% · resets {resetLocal:HH:mm}";
 
             SetTitle(title, subtitle);
@@ -63,6 +65,18 @@ internal sealed class UsageBand
             ApplyIcon(quiet: true);
         }
     }
+
+    private static string DescribeFailure(UsageResult result, bool verbose) => result.Reason switch
+    {
+        UsageFailureReason.NoCredentials => "sign in to Claude Code",
+        UsageFailureReason.TokenExpired => verbose ? "open Claude Code to refresh login" : "open Claude Code",
+        UsageFailureReason.HttpError when result.HttpStatusCode == 429 =>
+            verbose && result.RetryAt != null ? $"rate limited · retry {result.RetryAt.Value.ToLocalTime():HH:mm}" : "rate limited",
+        UsageFailureReason.HttpError => $"API error {result.HttpStatusCode}",
+        UsageFailureReason.NetworkError => "offline",
+        UsageFailureReason.ParseError => "parse error",
+        _ => "error fetching usage"
+    };
 
     private void SetTitle(string title, string? subtitle = null)
     {

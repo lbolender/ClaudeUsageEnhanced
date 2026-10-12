@@ -18,19 +18,17 @@ internal sealed class UsagePage : ContentPage
 
     public override IContent[] GetContent()
     {
-        UsageSnapshot? snapshot = null;
-        UsageFailureReason failureReason = UsageFailureReason.Ok;
-        int? httpStatus = null;
+        UsageResult result;
         try
         {
-            var result = _client.GetAsync(force: false).Result;
-            snapshot = result.Snapshot;
-            failureReason = result.Reason;
-            httpStatus = result.HttpStatusCode;
+            result = _client.GetAsync(force: false).Result;
         }
-        catch { }
+        catch
+        {
+            result = new UsageResult(UsageFailureReason.ParseError);
+        }
 
-        var md = new MarkdownContent(BuildMarkdown(snapshot, failureReason, httpStatus));
+        var md = new MarkdownContent(BuildMarkdown(result));
         var form = new FormContent
         {
             TemplateJson = """
@@ -52,24 +50,38 @@ internal sealed class UsagePage : ContentPage
         return [md, form];
     }
 
-    private string BuildMarkdown(UsageSnapshot? snapshot, UsageFailureReason failureReason, int? httpStatus)
+    private static string DescribeFailure(UsageResult result)
     {
+        var retry = result.RetryAt != null ? $" Next attempt at {result.RetryAt.Value.ToLocalTime():HH:mm}." : "";
+        return result.Reason switch
+        {
+            UsageFailureReason.NoCredentials => "No credentials found. Sign in to Claude Code to start tracking usage.",
+            UsageFailureReason.TokenExpired => "Login token expired. Open Claude Code (CLI or VS Code extension) once to refresh it — the value will update automatically.",
+            UsageFailureReason.HttpError when result.HttpStatusCode == 429 => $"Rate limited by the API.{retry}",
+            UsageFailureReason.HttpError => $"API error {result.HttpStatusCode}.{retry}",
+            UsageFailureReason.NetworkError => $"Network error. Please check your connection.{retry}",
+            UsageFailureReason.ParseError => $"Failed to parse usage data.{retry}",
+            _ => "Failed to fetch usage data."
+        };
+    }
+
+    private string BuildMarkdown(UsageResult result)
+    {
+        var snapshot = result.Snapshot;
         if (snapshot == null)
         {
-            var errorMsg = failureReason switch
-            {
-                UsageFailureReason.NoCredentials => "No credentials found. Sign in to Claude Code to start tracking usage.",
-                UsageFailureReason.HttpError => $"API error {httpStatus}. Please try again later.",
-                UsageFailureReason.NetworkError => "Network error. Please check your connection.",
-                UsageFailureReason.ParseError => "Failed to parse usage data. Please try again later.",
-                _ => "Failed to fetch usage data."
-            };
-            return $"# Claude usage\n\n{errorMsg}";
+            return $"# Claude usage\n\n{DescribeFailure(result)}";
         }
 
         var sb = new StringBuilder();
         sb.AppendLine("# Claude usage");
         sb.AppendLine();
+
+        if (result.IsStale)
+        {
+            sb.AppendLine($"> ⚠ Showing data from {snapshot.FetchedAt.ToLocalTime():HH:mm} — {DescribeFailure(result)}");
+            sb.AppendLine();
+        }
 
         var sessionResets = snapshot.SessionResetsAt.ToLocalTime();
         sb.AppendLine($"Max 5× · session resets {sessionResets:HH:mm}");
@@ -108,7 +120,7 @@ internal sealed class UsagePage : ContentPage
             }
         }
 
-        sb.AppendLine($"Last updated {DateTime.Now:HH:mm}");
+        sb.AppendLine($"Last updated {snapshot.FetchedAt.ToLocalTime():HH:mm}");
 
         return sb.ToString();
     }

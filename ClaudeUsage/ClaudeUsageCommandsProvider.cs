@@ -26,7 +26,7 @@ public sealed partial class ClaudeUsageCommandsProvider : CommandProvider
         _codexPage = new CodexUsagePage();
         _codexBand = new CodexUsageBand(_codexPage);
 
-        // Refresh band every 30 seconds
+        // Redraw band every 30 seconds; UsageClient serves from cache and hits the API at most every 3 minutes
         _refreshTimer = new Timer(async _ =>
         {
             await _usageBand.RefreshAsync();
