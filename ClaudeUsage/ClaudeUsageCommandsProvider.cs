@@ -7,9 +7,10 @@ namespace ClaudeUsage;
 
 public sealed partial class ClaudeUsageCommandsProvider : CommandProvider
 {
+    private readonly UsageClient _client = new();
     private readonly UsagePage _usagePage;
     private readonly UsageBand _usageBand;
-    private Timer? _refreshTimer;
+    private readonly Timer _refreshTimer;
 
     public ClaudeUsageCommandsProvider()
     {
@@ -17,8 +18,8 @@ public sealed partial class ClaudeUsageCommandsProvider : CommandProvider
         DisplayName = "ClaudeUsage";
         Icon = IconHelpers.FromRelativePath("Assets\\icons\\claude-filled.svg");
 
-        _usagePage = new UsagePage();
-        _usageBand = new UsageBand(_usagePage);
+        _usagePage = new UsagePage(_client);
+        _usageBand = new UsageBand(_client, _usagePage);
 
         // Redraw band every 30 seconds; UsageClient serves from cache and hits the API at most every 3 minutes
         _refreshTimer = new Timer(async _ =>

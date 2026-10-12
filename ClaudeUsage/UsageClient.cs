@@ -67,6 +67,7 @@ public class UsageClient
     private const string ApiVersion = "oauth-2025-04-20";
     private const string UserAgent = "claude-code/2.1.206";
     private const int CacheMaxAgeSeconds = 180; // at most one request every 3 minutes
+    private const int ForcedMinAgeSeconds = 30; // a manual refresh still reuses data younger than this
     private const int BackoffBaseSeconds = 60;
     private const int BackoffMaxSeconds = 1800; // 30 minutes
     private const int ExpirySkewSeconds = 60;
@@ -83,22 +84,31 @@ public class UsageClient
     }
 
     /// <summary>
+    /// Raised with the result of every fetch attempt (not for cache or backoff hits), so the
+    /// dock band shows a refresh triggered from the page without waiting for its next tick.
+    /// Handlers must only display the result; calling GetAsync from them can loop.
+    /// </summary>
+    public event Action<UsageResult>? Updated;
+
+    /// <summary>
     /// Get usage snapshot, using cache if fresher than CacheMaxAgeSeconds.
-    /// force skips the cache but never an active backoff.
+    /// force shortens the cache to ForcedMinAgeSeconds but never skips an active backoff.
     /// Returns result with failure reason (and last good snapshot) if unsuccessful.
     /// </summary>
     public async Task<UsageResult> GetAsync(bool force = false)
     {
-        if (!force && IsCacheFresh())
+        var maxAgeSeconds = force ? ForcedMinAgeSeconds : CacheMaxAgeSeconds;
+        if (IsCacheFresh(maxAgeSeconds))
         {
             return new UsageResult(UsageFailureReason.Ok, _lastGood);
         }
 
+        UsageResult result;
         await _fetchLock.WaitAsync();
         try
         {
             // Another caller may have fetched while we were waiting
-            if (!force && IsCacheFresh())
+            if (IsCacheFresh(maxAgeSeconds))
             {
                 return new UsageResult(UsageFailureReason.Ok, _lastGood);
             }
@@ -109,17 +119,26 @@ public class UsageClient
                 return _lastResult;
             }
 
-            _lastResult = await FetchAsync();
-            return _lastResult;
+            result = _lastResult = await FetchAsync();
         }
         finally
         {
             _fetchLock.Release();
         }
+
+        try
+        {
+            Updated?.Invoke(result);
+        }
+        catch (Exception ex)
+        {
+            DebugLog.WriteLine($"GetAsync: Updated handler failed: {ex}");
+        }
+        return result;
     }
 
-    private bool IsCacheFresh() =>
-        _lastGood != null && (DateTime.UtcNow - _lastGood.FetchedAt).TotalSeconds < CacheMaxAgeSeconds;
+    private bool IsCacheFresh(int maxAgeSeconds) =>
+        _lastGood != null && (DateTime.UtcNow - _lastGood.FetchedAt).TotalSeconds < maxAgeSeconds;
 
     private async Task<UsageResult> FetchAsync()
     {

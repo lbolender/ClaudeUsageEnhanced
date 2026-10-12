@@ -11,18 +11,17 @@ internal sealed class UsageBand
     private readonly WrappedDockItem _dockItem;
     private readonly ListItem _sessionItem;
     private readonly ListItem _weeklyItem;
-    private readonly UsagePage _page;
 
     public WrappedDockItem DockItem => _dockItem;
     public int RefreshSeconds => 30;
 
-    public UsageBand(UsagePage page)
+    public UsageBand(UsageClient client, UsagePage page)
     {
-        _client = page._client;
-        _page = page;
+        _client = client;
         _sessionItem = new ListItem(page);
         _weeklyItem = new ListItem(page);
         _dockItem = new WrappedDockItem([_sessionItem, _weeklyItem], "claudeusage.dock.usage", "Claude Usage");
+        _client.Updated += Render;
         _ = RefreshAsync();
     }
 
@@ -30,40 +29,7 @@ internal sealed class UsageBand
     {
         try
         {
-            var result = await _client.GetAsync();
-
-            if (result.Snapshot == null)
-            {
-                var failure = DescribeFailure(result, verbose: true);
-                SetText(_sessionItem, "Claude —", failure);
-                SetText(_weeklyItem, "—", failure);
-                ApplyIcons(sessionLow: false, weeklyLow: false);
-                return;
-            }
-
-            var snapshot = result.Snapshot;
-            var sessionLeft = (int)Math.Round(snapshot.SessionLeftPercent);
-            var weeklyLeft = (int)Math.Round(snapshot.WeeklyLeftPercent);
-
-            if (result.IsStale)
-            {
-                // Keep the last known values visible, but make clear they are outdated
-                var fetchedLocal = snapshot.FetchedAt.ToLocalTime();
-                var stale = $"stale {fetchedLocal:HH:mm} · {DescribeFailure(result, verbose: false)}";
-                SetText(_sessionItem, $"{sessionLeft}%", stale);
-                SetText(_weeklyItem, $"{weeklyLeft}%", stale);
-                ApplyIcons(sessionLow: false, weeklyLow: false);
-                return;
-            }
-
-            var sessionReset = snapshot.SessionResetsAt.ToLocalTime();
-            var weeklyReset = snapshot.WeeklyResetsAt.ToLocalTime();
-
-            SetText(_sessionItem, $"{sessionLeft}%", $"5h · resets {sessionReset:HH:mm}");
-            SetText(_weeklyItem, $"{weeklyLeft}%",
-                $"week · resets {weeklyReset.ToString("ddd HH:mm", CultureInfo.InvariantCulture)}");
-
-            ApplyIcons(sessionLow: sessionLeft < 20, weeklyLow: weeklyLeft < 20);
+            Render(await _client.GetAsync());
         }
         catch
         {
@@ -71,6 +37,42 @@ internal sealed class UsageBand
             SetText(_weeklyItem, "—", "error fetching usage");
             ApplyIcons(sessionLow: false, weeklyLow: false);
         }
+    }
+
+    private void Render(UsageResult result)
+    {
+        if (result.Snapshot == null)
+        {
+            var failure = DescribeFailure(result, verbose: true);
+            SetText(_sessionItem, "Claude —", failure);
+            SetText(_weeklyItem, "—", failure);
+            ApplyIcons(sessionLow: false, weeklyLow: false);
+            return;
+        }
+
+        var snapshot = result.Snapshot;
+        var sessionLeft = (int)Math.Round(snapshot.SessionLeftPercent);
+        var weeklyLeft = (int)Math.Round(snapshot.WeeklyLeftPercent);
+
+        if (result.IsStale)
+        {
+            // Keep the last known values visible, but make clear they are outdated
+            var fetchedLocal = snapshot.FetchedAt.ToLocalTime();
+            var stale = $"stale {fetchedLocal:HH:mm} · {DescribeFailure(result, verbose: false)}";
+            SetText(_sessionItem, $"{sessionLeft}%", stale);
+            SetText(_weeklyItem, $"{weeklyLeft}%", stale);
+            ApplyIcons(sessionLow: false, weeklyLow: false);
+            return;
+        }
+
+        var sessionReset = snapshot.SessionResetsAt.ToLocalTime();
+        var weeklyReset = snapshot.WeeklyResetsAt.ToLocalTime();
+
+        SetText(_sessionItem, $"{sessionLeft}%", $"5h · resets {sessionReset:HH:mm}");
+        SetText(_weeklyItem, $"{weeklyLeft}%",
+            $"week · resets {weeklyReset.ToString("ddd HH:mm", CultureInfo.InvariantCulture)}");
+
+        ApplyIcons(sessionLow: sessionLeft < 20, weeklyLow: weeklyLeft < 20);
     }
 
     private static string DescribeFailure(UsageResult result, bool verbose) => result.Reason switch

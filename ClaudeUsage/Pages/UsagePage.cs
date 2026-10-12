@@ -6,10 +6,11 @@ namespace ClaudeUsage.Pages;
 
 internal sealed class UsagePage : ContentPage
 {
-    internal readonly UsageClient _client = new();
+    private readonly UsageClient _client;
 
-    public UsagePage()
+    public UsagePage(UsageClient client)
     {
+        _client = client;
         Id = "claudeusage.page.usage";
         Name = "Claude Usage";
         Title = "Claude usage stats";
@@ -28,9 +29,27 @@ internal sealed class UsagePage : ContentPage
             result = new UsageResult(UsageFailureReason.ParseError);
         }
 
-        var md = new MarkdownContent(BuildMarkdown(result));
-        var form = new FormContent
+        return [new MarkdownContent(BuildMarkdown(result)), new RefreshForm(this)];
+    }
+
+    // Fetch in the background so the button returns immediately; the host re-calls GetContent afterwards
+    private void RefreshNow() => _ = Task.Run(async () =>
+    {
+        try
         {
+            await _client.GetAsync(force: true);
+        }
+        catch { /* GetContent reports the failure */ }
+        RaiseItemsChanged(0);
+    });
+
+    private sealed class RefreshForm : FormContent
+    {
+        private readonly UsagePage _page;
+
+        public RefreshForm(UsagePage page)
+        {
+            _page = page;
             TemplateJson = """
             {
               "type": "AdaptiveCard",
@@ -43,11 +62,15 @@ internal sealed class UsagePage : ContentPage
                 { "type": "Action.Submit", "title": "Refresh now", "data": { "action": "refresh" } }
               ]
             }
-            """,
-            DataJson = "{}",
-        };
+            """;
+            DataJson = "{}";
+        }
 
-        return [md, form];
+        public override ICommandResult SubmitForm(string payload, string state)
+        {
+            _page.RefreshNow();
+            return CommandResult.KeepOpen();
+        }
     }
 
     private static string DescribeFailure(UsageResult result)
