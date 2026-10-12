@@ -1,4 +1,4 @@
-# ClaudeUsage — full build + sign + install (re-run after every code change)
+# ClaudeUsage - full build + sign + install (re-run after every code change)
 # Run from a normal PowerShell prompt; UAC will be prompted for the install step.
 
 $ErrorActionPreference = "Stop"
@@ -61,13 +61,13 @@ Add-AppxPackage -Path '$msix' -ForceTargetApplicationShutdown
   $installScriptPath = Join-Path $bin "elevated-install.ps1"
   Set-Content -Path $installScriptPath -Value $installScript
   $proc = Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File","`"$installScriptPath`"" -PassThru -Wait
-  if ($proc.ExitCode -ne 0) { throw "Elevated install failed (exit code $($proc.ExitCode)) — package NOT updated" }
+  if ($proc.ExitCode -ne 0) { throw "Elevated install failed (exit code $($proc.ExitCode)) - package NOT updated" }
 } else {
   Add-AppxPackage -Path $msix -ForceTargetApplicationShutdown
 }
 $installed = (Get-AppxPackage -Name "Mathias.ClaudeUsage").Version
 $expected = ([xml](Get-Content (Join-Path $proj "Package.appxmanifest"))).Package.Identity.Version
-if ($installed -ne $expected) { throw "Installed version $installed does not match manifest $expected — install failed" }
+if ($installed -ne $expected) { throw "Installed version $installed does not match manifest $expected - install failed" }
 
 Write-Host ""
 Write-Host "Restarting CmdPal..."
