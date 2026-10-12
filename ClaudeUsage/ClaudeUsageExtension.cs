@@ -3,7 +3,7 @@ using Microsoft.CommandPalette.Extensions;
 
 namespace ClaudeUsage;
 
-[Guid("8ad3ff09-374c-4da2-82e6-3c214245cf0f")]
+[Guid("3033a89c-3cdb-47ff-ba53-14c8ae9f53e2")]
 public sealed partial class ClaudeUsageExtension : IExtension, IDisposable
 {
     private readonly ManualResetEvent _disposed;

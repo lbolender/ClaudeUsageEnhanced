@@ -9,10 +9,12 @@ $staging = Join-Path $bin "msix-staging"
 $msix = Join-Path $bin "ClaudeUsage.msix"
 $cer = Join-Path $bin "ClaudeUsage.cer"
 $pfx = Join-Path $bin "ClaudeUsage.pfx"
-$pwd = "ClaudeUsageDev!"
+$pfxPassword = "ClaudeUsageDev!"
 $dotnet = "C:\Program Files\dotnet\dotnet.exe"
 $makeAppx = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\makeappx.exe"
 $signTool = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe"
+# Package name, publisher and version come from the manifest; the dev cert subject must equal the publisher
+$identity = ([xml](Get-Content (Join-Path $proj "Package.appxmanifest"))).Package.Identity
 
 Write-Host "[1/6] Publish managed assemblies"
 & $dotnet publish (Join-Path $proj "ClaudeUsage.csproj") -c Release -r win-x64 --self-contained false -p:GenerateAppxPackageOnBuild=false -v minimal -nologo
@@ -32,11 +34,11 @@ Copy-Item (Join-Path $proj "Public\*") $stagingPublic -Recurse -Force -ErrorActi
 Copy-Item (Join-Path $proj "Package.appxmanifest") (Join-Path $staging "AppxManifest.xml") -Force
 
 Write-Host "[3/6] Ensure dev cert exists"
-$cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq "CN=Mathias-Dev" } | Select-Object -First 1
+$cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $identity.Publisher } | Select-Object -First 1
 if (-not $cert) {
-  $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Mathias-Dev" -KeyUsage DigitalSignature -FriendlyName "ClaudeUsage Dev" -CertStoreLocation "Cert:\CurrentUser\My" -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3","2.5.29.19={text}")
+  $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $identity.Publisher -KeyUsage DigitalSignature -FriendlyName "ClaudeUsage Dev" -CertStoreLocation "Cert:\CurrentUser\My" -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3","2.5.29.19={text}")
 }
-$securePwd = ConvertTo-SecureString -String $pwd -Force -AsPlainText
+$securePwd = ConvertTo-SecureString -String $pfxPassword -Force -AsPlainText
 Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $securePwd | Out-Null
 Export-Certificate -Cert $cert -FilePath $cer | Out-Null
 
@@ -46,7 +48,7 @@ if (Test-Path $msix) { Remove-Item $msix -Force }
 if ($LASTEXITCODE -ne 0) { throw "makeappx failed" }
 
 Write-Host "[5/6] Sign MSIX"
-& $signTool sign /fd SHA256 /a /f $pfx /p $pwd $msix | Out-Null
+& $signTool sign /fd SHA256 /a /f $pfx /p $pfxPassword $msix | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
 
 Write-Host "[6/6] Install"
@@ -65,9 +67,8 @@ Add-AppxPackage -Path '$msix' -ForceTargetApplicationShutdown
 } else {
   Add-AppxPackage -Path $msix -ForceTargetApplicationShutdown
 }
-$installed = (Get-AppxPackage -Name "Mathias.ClaudeUsage").Version
-$expected = ([xml](Get-Content (Join-Path $proj "Package.appxmanifest"))).Package.Identity.Version
-if ($installed -ne $expected) { throw "Installed version $installed does not match manifest $expected - install failed" }
+$installed = (Get-AppxPackage -Name $identity.Name).Version
+if ($installed -ne $identity.Version) { throw "Installed version $installed does not match manifest $($identity.Version) - install failed" }
 
 Write-Host ""
 Write-Host "Restarting CmdPal..."
@@ -77,5 +78,5 @@ explorer.exe "shell:AppsFolder\Microsoft.CommandPalette_8wekyb3d8bbwe!App"
 
 Write-Host ""
 Write-Host "Done. Verify:"
-Get-AppxPackage -Name "Mathias.ClaudeUsage" | Format-Table Name, Version, PackageFamilyName -AutoSize
+Get-AppxPackage -Name $identity.Name | Format-Table Name, Version, PackageFamilyName -AutoSize
 Write-Host "Open CmdPal (Win+Alt+Space). To put ClaudeUsage widget on the Dock: Settings -> Dock -> add bands."

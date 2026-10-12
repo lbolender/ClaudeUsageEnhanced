@@ -11,7 +11,7 @@ public static class Program
             args,
             new ExtensionHostRunnerParameters
             {
-                PublisherMoniker = "Mathias",
+                PublisherMoniker = "LBolender",
                 ProductMoniker = "ClaudeUsage",
                 ExtensionFactories = new()
                 {

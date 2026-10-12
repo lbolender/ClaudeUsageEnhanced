@@ -7,11 +7,11 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   IgnorableNamespaces="uap uap3 com rescap">
 
-  <Identity Name="Mathias.ClaudeUsage" Publisher="CN=Mathias-Dev" Version="0.1.10.0" />
+  <Identity Name="LBolender.ClaudeUsage" Publisher="CN=LBolender-Dev" Version="0.1.12.0" />
 
   <Properties>
     <DisplayName>Claude Usage</DisplayName>
-    <PublisherDisplayName>Mathias</PublisherDisplayName>
+    <PublisherDisplayName>L. Bolender</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -36,7 +36,7 @@
         <com:Extension Category="windows.comServer">
           <com:ComServer>
             <com:ExeServer Executable="ClaudeUsage.exe" Arguments="-RegisterProcessAsComServer" DisplayName="Claude Usage">
-              <com:Class Id="8ad3ff09-374c-4da2-82e6-3c214245cf0f" DisplayName="Claude Usage" />
+              <com:Class Id="3033a89c-3cdb-47ff-ba53-14c8ae9f53e2" DisplayName="Claude Usage" />
             </com:ExeServer>
           </com:ComServer>
         </com:Extension>
@@ -50,7 +50,7 @@
             <uap3:Properties>
               <CmdPalProvider>
                 <Activation>
-                  <CreateInstance ClassId="8ad3ff09-374c-4da2-82e6-3c214245cf0f" />
+                  <CreateInstance ClassId="3033a89c-3cdb-47ff-ba53-14c8ae9f53e2" />
                 </Activation>
                 <SupportedInterfaces>
                   <Commands />
