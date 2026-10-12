@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using ClaudeUsage.Pages;
@@ -8,7 +9,8 @@ internal sealed class CodexUsageBand
 {
     private readonly CodexUsageClient _client;
     private readonly WrappedDockItem _dockItem;
-    private readonly ListItem _bandItem;
+    private readonly ListItem _sessionItem;
+    private readonly ListItem _weeklyItem;
     private readonly CodexUsagePage _page;
 
     public WrappedDockItem DockItem => _dockItem;
@@ -18,8 +20,9 @@ internal sealed class CodexUsageBand
     {
         _client = page._client;
         _page = page;
-        _bandItem = new ListItem(page);
-        _dockItem = new WrappedDockItem([_bandItem], "claudeusage.dock.codex", "Codex Usage");
+        _sessionItem = new ListItem(page);
+        _weeklyItem = new ListItem(page);
+        _dockItem = new WrappedDockItem([_sessionItem, _weeklyItem], "claudeusage.dock.codex", "Codex Usage");
         _ = RefreshAsync();
     }
 
@@ -39,54 +42,44 @@ internal sealed class CodexUsageBand
                     UsageFailureReason.ParseError => "parse error",
                     _ => "error fetching usage"
                 };
-                SetTitle("Codex —", errorMessage);
-                ApplyIcon(quiet: true);
+                SetText(_sessionItem, "Codex —", errorMessage);
+                SetText(_weeklyItem, "—", errorMessage);
+                ApplyIcons(sessionLow: false, weeklyLow: false);
                 return;
             }
 
             var snapshot = result.Snapshot;
             var sessionLeft = (int)Math.Round(snapshot.SessionLeftPercent);
             var weeklyLeft = (int)Math.Round(snapshot.WeeklyLeftPercent);
-            var resetLocal = snapshot.SessionResetsAt.ToLocalTime();
+            var sessionReset = snapshot.SessionResetsAt.ToLocalTime();
+            var weeklyReset = snapshot.WeeklyResetsAt.ToLocalTime();
 
-            var title = $"{sessionLeft}%";
-            var subtitle = $"wk {weeklyLeft}% · resets {resetLocal:HH:mm}";
+            SetText(_sessionItem, $"{sessionLeft}%", $"5h · resets {sessionReset:HH:mm}");
+            SetText(_weeklyItem, $"{weeklyLeft}%",
+                $"week · resets {weeklyReset.ToString("ddd HH:mm", CultureInfo.InvariantCulture)}");
 
-            SetTitle(title, subtitle);
-
-            var isLow = sessionLeft < 20;
-            ApplyIcon(quiet: !isLow);
+            ApplyIcons(sessionLow: sessionLeft < 20, weeklyLow: weeklyLeft < 20);
         }
         catch
         {
-            SetTitle("Codex —", "error fetching usage");
-            ApplyIcon(quiet: true);
+            SetText(_sessionItem, "Codex —", "error fetching usage");
+            SetText(_weeklyItem, "—", "error fetching usage");
+            ApplyIcons(sessionLow: false, weeklyLow: false);
         }
     }
 
-    private void SetTitle(string title, string? subtitle = null)
+    private static void SetText(ListItem item, string title, string subtitle)
     {
-        _bandItem.Title = title;
-        if (subtitle != null)
-        {
-            _bandItem.Subtitle = subtitle;
-        }
+        item.Title = title;
+        item.Subtitle = subtitle;
     }
 
-    private string? _appliedIconPath;
+    private string? _sessionIconKind;
+    private string? _weeklyIconKind;
 
-    private void ApplyIcon(bool quiet)
+    private void ApplyIcons(bool sessionLow, bool weeklyLow)
     {
-        var path = $"Assets\\icons\\codex-{(quiet ? "outline" : "filled")}.svg";
-        if (path == _appliedIconPath)
-        {
-            return;
-        }
-        try
-        {
-            _bandItem.Icon = IconHelpers.FromRelativePath(path);
-            _appliedIconPath = path;
-        }
-        catch { /* fallback: leave existing icon */ }
+        BandIcons.Apply(_sessionItem, ref _sessionIconKind, sessionLow ? BandIcons.Filled : BandIcons.Outline, "codex");
+        BandIcons.Apply(_weeklyItem, ref _weeklyIconKind, weeklyLow ? BandIcons.Filled : BandIcons.Calendar, "codex");
     }
 }

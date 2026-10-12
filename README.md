@@ -12,9 +12,9 @@ A PowerToys Command Palette extension that pins your Claude Code and Codex (Chat
 
 ## Features
 
-- **⚡ Dock bands**: live indicator of your 5-hour session (% left) for both Claude Code and Codex CLI, with weekly % and reset time in the subtitle
+- **⚡ Dock bands**: live indicator of your 5-hour session and weekly limit (% left, side by side) for both Claude Code and Codex CLI; hover either value for its reset time
 - **📊 Stats page**: session, weekly, and per-model limits as progress bars, with reset countdowns and a one-click refresh
-- **🎨 Smart color alerts**: the icon fills solid when less than 20% of your session remains
+- **🎨 Smart color alerts**: icons follow your light/dark theme and switch to the brand color when less than 20% of a limit remains
 - **🔒 Zero telemetry**: talks only to Anthropic's / OpenAI's official usage endpoints with the tokens Claude Code and Codex CLI already store locally; nothing else leaves your machine
 
 ## Requirements
