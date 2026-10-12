@@ -21,6 +21,11 @@ jobs:
       - name: Build and Package
         run: .github/scripts/build-ci.ps1
         shell: powershell
+        env:
+          # Optional stable signing cert; its subject must equal the manifest Publisher.
+          # Without these secrets every release is signed with a fresh throwaway cert.
+          SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
 
       - name: Copy Install Script
         run: Copy-Item install.ps1 dist/

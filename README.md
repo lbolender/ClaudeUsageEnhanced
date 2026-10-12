@@ -74,6 +74,10 @@ For a full trace, create an empty file `%TEMP%\claudeusage-debug.on` and check `
 - Bump the version in `Package.appxmanifest`, then run `build-and-install.ps1`
 - Check PowerShell output for build errors
 
+### Release signing
+
+MSIX packages must be signed with a certificate whose subject equals the `Publisher` in `Package.appxmanifest`. The release workflow uses the repository secrets `SIGNING_PFX_BASE64` (base64-encoded PFX) and `SIGNING_PFX_PASSWORD` if they are set, so every release is signed with the same certificate and users only trust it once. Without them, each release is signed with a fresh throwaway certificate.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
