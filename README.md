@@ -13,7 +13,7 @@ A PowerToys Command Palette extension that pins your Claude Code subscription li
 ## Features
 
 - **⚡ Dock band**: live indicator of your 5-hour session and weekly limit (% left, side by side); hover either value for its reset time
-- **📊 Stats page**: session, weekly, and per-model limits as progress bars, with reset times and a one-click refresh
+- **📊 Stats page**: your plan, session, weekly, and per-model limits as progress bars, with reset times and a one-click refresh
 - **🎨 Smart color alerts**: icons follow your light/dark theme and switch to the brand color when less than 20% of a limit remains
 - **🔒 Zero telemetry**: talks only to Anthropic's official usage endpoint with the token Claude Code already stores locally; nothing else leaves your machine
 

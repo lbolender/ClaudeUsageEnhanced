@@ -1,25 +1,26 @@
 using System.Globalization;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace ClaudeUsage;
 
 /// <summary>
-/// Usage snapshot from Claude API
+/// Usage snapshot from Claude API. Reset times are null when the API reports none
+/// (e.g. no 5h window has started yet). Plan is a display label such as "Max 5×".
 /// </summary>
 public record UsageSnapshot(
     double SessionLeftPercent,
     double WeeklyLeftPercent,
-    DateTime SessionResetsAt,
-    DateTime WeeklyResetsAt,
+    DateTime? SessionResetsAt,
+    DateTime? WeeklyResetsAt,
     List<LimitInfo> Limits,
-    string SubscriptionType,
+    string? Plan,
     DateTime FetchedAt);
 
 public record LimitInfo(
     string Kind,
     double PercentUsed,
-    DateTime ResetsAt,
+    DateTime? ResetsAt,
     string? ModelDisplayName = null);
 
 /// <summary>
@@ -148,7 +149,7 @@ public class UsageClient
             var credentialsExist = File.Exists(_credentialsPath);
             DebugLog.WriteLine($"FetchAsync: credentialsPath={_credentialsPath}, exists={credentialsExist}");
 
-            (token, var expiresAt) = ReadCredentials();
+            (token, var expiresAt, var plan) = ReadCredentials();
             if (string.IsNullOrEmpty(token))
             {
                 DebugLog.WriteLine($"FetchAsync: token is null/empty, returning NoCredentials");
@@ -223,15 +224,13 @@ public class UsageClient
                 }
             }
 
-            var subType = GetString(root, "subscription_type") ?? "unknown";
-
             _lastGood = new UsageSnapshot(
                 SessionLeftPercent: 100 - sessionUtil,
                 WeeklyLeftPercent: 100 - weeklyUtil,
                 SessionResetsAt: sessionResets,
                 WeeklyResetsAt: weeklyResets,
                 Limits: limits,
-                SubscriptionType: subType,
+                Plan: plan,
                 FetchedAt: DateTime.UtcNow);
 
             _consecutiveFailures = 0;
@@ -280,14 +279,14 @@ public class UsageClient
         return new UsageResult(reason, _lastGood, statusCode, _nextAllowedFetch);
     }
 
-    private (string? Token, DateTime? ExpiresAt) ReadCredentials()
+    private (string? Token, DateTime? ExpiresAt, string? Plan) ReadCredentials()
     {
         try
         {
             if (!File.Exists(_credentialsPath))
             {
                 DebugLog.WriteLine($"ReadCredentials: credentials file does not exist at {_credentialsPath}");
-                return (null, null);
+                return (null, null, null);
             }
 
             var json = File.ReadAllText(_credentialsPath);
@@ -295,7 +294,7 @@ public class UsageClient
             if (!doc.RootElement.TryGetProperty("claudeAiOauth", out var oauth))
             {
                 DebugLog.WriteLine($"ReadCredentials: credentials file exists but claudeAiOauth not found");
-                return (null, null);
+                return (null, null, null);
             }
 
             var token = oauth.TryGetProperty("accessToken", out var tok) && tok.ValueKind == JsonValueKind.String
@@ -316,13 +315,40 @@ public class UsageClient
                 DebugLog.WriteLine($"ReadCredentials: credentials file exists but claudeAiOauth.accessToken not found");
             }
 
-            return (token, expiresAt);
+            var plan = FormatPlan(GetString(oauth, "subscriptionType"), GetString(oauth, "rateLimitTier"));
+            return (token, expiresAt, plan);
         }
         catch (Exception ex)
         {
             DebugLog.WriteLine($"ReadCredentials: exception reading credentials: {ex}");
-            return (null, null);
+            return (null, null, null);
         }
+    }
+
+    /// <summary>
+    /// Builds a plan label from the credentials, e.g. ("max", "default_claude_max_20x") → "Max 20×",
+    /// ("team", "default_claude_max_5x") → "Team · Premium seat", ("pro", null) → "Pro".
+    /// </summary>
+    private static string? FormatPlan(string? subscriptionType, string? rateLimitTier)
+    {
+        var plan = string.IsNullOrEmpty(subscriptionType)
+            ? null
+            : char.ToUpperInvariant(subscriptionType[0]) + subscriptionType[1..];
+        var multiplier = rateLimitTier == null ? null : Regex.Match(rateLimitTier, @"max_(\d+)x");
+
+        // Team seats carry the tier of their consumer counterpart: premium seats a Max tier,
+        // standard seats a Pro-level one. The multiplier itself does not apply to them.
+        if (plan == "Team" && rateLimitTier != null)
+        {
+            return multiplier is { Success: true } ? "Team · Premium seat" : "Team · Standard seat";
+        }
+
+        var tier = multiplier is { Success: true } ? $"Max {multiplier.Groups[1].Value}×" : null;
+        if (plan == "Max" && tier != null)
+        {
+            return tier;
+        }
+        return plan != null && tier != null ? $"{plan} · {tier}" : plan ?? tier;
     }
 
     private string? GetString(JsonElement element, string path)
@@ -389,18 +415,11 @@ public class UsageClient
         return null;
     }
 
-    private DateTime ParseDateTime(string? isoString)
-    {
-        if (string.IsNullOrEmpty(isoString))
-        {
-            return DateTime.UtcNow.AddHours(1);
-        }
-        if (DateTime.TryParse(isoString, out var dt))
-        {
-            return dt.ToUniversalTime();
-        }
-        return DateTime.UtcNow.AddHours(1);
-    }
+    // Null when the API reports no reset time; showing a made-up time instead would be misleading
+    private static DateTime? ParseDateTime(string? isoString) =>
+        DateTimeOffset.TryParse(isoString, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var dto)
+            ? dto.UtcDateTime
+            : null;
 
     public void Dispose()
     {

@@ -65,15 +65,14 @@ internal sealed class UsageBand
             return;
         }
 
-        var sessionReset = snapshot.SessionResetsAt.ToLocalTime();
-        var weeklyReset = snapshot.WeeklyResetsAt.ToLocalTime();
-
-        SetText(_sessionItem, $"{sessionLeft}%", $"5h · resets {sessionReset:HH:mm}");
-        SetText(_weeklyItem, $"{weeklyLeft}%",
-            $"week · resets {weeklyReset.ToString("ddd HH:mm", CultureInfo.InvariantCulture)}");
+        SetText(_sessionItem, $"{sessionLeft}%", $"5h · resets {FormatReset(snapshot.SessionResetsAt, "HH:mm")}");
+        SetText(_weeklyItem, $"{weeklyLeft}%", $"week · resets {FormatReset(snapshot.WeeklyResetsAt, "ddd HH:mm")}");
 
         ApplyIcons(sessionLow: sessionLeft < 20, weeklyLow: weeklyLeft < 20);
     }
+
+    private static string FormatReset(DateTime? resetsAtUtc, string format) =>
+        resetsAtUtc?.ToLocalTime().ToString(format, CultureInfo.InvariantCulture) ?? "—";
 
     private static string DescribeFailure(UsageResult result, bool verbose) => result.Reason switch
     {

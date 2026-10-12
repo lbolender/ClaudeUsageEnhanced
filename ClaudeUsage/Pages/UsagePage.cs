@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
@@ -106,8 +107,8 @@ internal sealed class UsagePage : ContentPage
             sb.AppendLine();
         }
 
-        var sessionResets = snapshot.SessionResetsAt.ToLocalTime();
-        sb.AppendLine($"Max 5× · session resets {sessionResets:HH:mm}");
+        var sessionResets = $"session resets {FormatReset(snapshot.SessionResetsAt, "HH:mm")}";
+        sb.AppendLine(snapshot.Plan != null ? $"{snapshot.Plan} · {sessionResets}" : sessionResets);
         sb.AppendLine();
 
         // Session limit
@@ -118,7 +119,6 @@ internal sealed class UsagePage : ContentPage
         sb.AppendLine();
 
         // Weekly limits
-        var weeklyResets = snapshot.WeeklyResetsAt.ToLocalTime();
         var weeklyPercent = (int)Math.Round(snapshot.WeeklyLeftPercent);
         sb.AppendLine("## Week (all models)");
         var weeklyBar = BuildUnicodeBar(100 - weeklyPercent, 24);
@@ -147,6 +147,9 @@ internal sealed class UsagePage : ContentPage
 
         return sb.ToString();
     }
+
+    private static string FormatReset(DateTime? resetsAtUtc, string format) =>
+        resetsAtUtc?.ToLocalTime().ToString(format, CultureInfo.InvariantCulture) ?? "—";
 
     private string BuildUnicodeBar(int used, int width)
     {
