@@ -21,12 +21,11 @@ public sealed partial class ClaudeUsageCommandsProvider : CommandProvider
         _usagePage = new UsagePage(_client);
         _usageBand = new UsageBand(_client, _usagePage);
 
-        // Redraw band every 30 seconds; UsageClient serves from cache and hits the API at most every 3 minutes
-        _refreshTimer = new Timer(async _ =>
-        {
-            await _usageBand.RefreshAsync();
-            RaiseItemsChanged(0);
-        }, null, TimeSpan.FromSeconds(_usageBand.RefreshSeconds), TimeSpan.FromSeconds(_usageBand.RefreshSeconds));
+        // Redraw band every 30 seconds; UsageClient serves from cache and hits the API at most every 3 minutes.
+        // The band items push their own property changes to CmdPal. RaiseItemsChanged here would make the
+        // host reload all top-level items and visibly redraw the whole dock on every tick.
+        _refreshTimer = new Timer(_ => _ = _usageBand.RefreshAsync(), null,
+            TimeSpan.FromSeconds(_usageBand.RefreshSeconds), TimeSpan.FromSeconds(_usageBand.RefreshSeconds));
     }
 
     public override ICommandItem[] TopLevelCommands() =>

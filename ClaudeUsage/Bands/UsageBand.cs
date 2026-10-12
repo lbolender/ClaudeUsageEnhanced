@@ -87,10 +87,17 @@ internal sealed class UsageBand
         _ => "error fetching usage"
     };
 
+    // Only assign changed values, so CmdPal is not asked to redraw identical text every tick
     private static void SetText(ListItem item, string title, string subtitle)
     {
-        item.Title = title;
-        item.Subtitle = subtitle;
+        if (item.Title != title)
+        {
+            item.Title = title;
+        }
+        if (item.Subtitle != subtitle)
+        {
+            item.Subtitle = subtitle;
+        }
     }
 
     private string? _sessionIconKind;
